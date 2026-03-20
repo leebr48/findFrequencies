@@ -74,9 +74,7 @@ class InertiaMatrix:
         return sp.coo_matrix((values, (rows, cols)), shape=(size, size))
 
 if __name__ == '__main__':
+    
     #load a_matrix.dat (A) and b_matrix.dat (B) as numpy arrays
-    B = InertiaMatrix('.').load_matrix().toarray()
     A = FieldBendingMatrix('.').load_matrix().toarray()
-
-    print(B)
-    print(A)
+    B = InertiaMatrix('.').load_matrix().toarray()
