@@ -27,6 +27,8 @@ export PETSC_ARCH=apma4302-project
   --download-mumps \
   --download-hdf5 \
   --download-petsc4py \
-  --download-hwloc
+  --download-hwloc \
+  --download-bison \
+  --download-ptscotch
 
 echo "Configuration completed successfully!"
