@@ -195,7 +195,7 @@ def solve_generalized_eigenproblem(A_petsc, B_petsc, real_min, real_max, imag_bo
         pc.setType(PETSc.PC.Type.BJACOBI)
 
     else:
-        raise ValueError("Method must be 'ciss' or 'krylov'")
+        raise ValueError("Method must be 'ciss' or 'krylov' or 'jd'.")
 
     PETSc.Sys.Print(f"Solving with {method.upper()}...")
     eps.solve()
@@ -216,27 +216,28 @@ def solve_generalized_eigenproblem(A_petsc, B_petsc, real_min, real_max, imag_bo
 # ==========================================
 if __name__ == "__main__":
     
-    # 1. Load your matrices using SciPy
+    # Load your matrices using SciPy
     PETSc.Sys.Print("Loading SciPy matrices...")
     A_scipy = FieldBendingMatrix('.').load_matrix()
     B_scipy = InertiaMatrix('.').load_matrix()
     
-    # 2. Convert to PETSc format with MPI preallocation
+    # Convert to PETSc format with MPI preallocation
     PETSc.Sys.Print("Converting to PETSc Mat format...")
     A_petsc = scipy_coo_to_petsc(A_scipy)
     B_petsc = scipy_coo_to_petsc(B_scipy)
     
-    # 3. Define your search bounds
-    real_min, real_max = 0, 1.0e5
-    imag_bound = 1.0e5
+    # Define search bounds
+    # NOTE: eigenvalues have units kHz^2
+    real_min, real_max = 1.0e2, 5.0e3
+    imag_bound = 1.0e-4
     
-    # 4. Run the solver
+    # Run the solver
     found_evals = solve_generalized_eigenproblem(
         A_petsc, B_petsc, 
         real_min=real_min, 
         real_max=real_max, 
         imag_bound=imag_bound,
-        method='jd' 
+        method='ciss' 
     )
     
     PETSc.Sys.Print(f"Extraction complete. Found {len(found_evals)} eigenvalues strictly within the real bounds.")
