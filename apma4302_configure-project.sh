@@ -29,6 +29,7 @@ export PETSC_ARCH=apma4302-project
   --download-petsc4py \
   --download-hwloc \
   --download-bison \
-  --download-ptscotch
+  --download-ptscotch \
+  --download-superlu_dist
 
 echo "Configuration completed successfully!"
