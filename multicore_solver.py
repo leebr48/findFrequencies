@@ -1,3 +1,5 @@
+# This script was adapted from https://github.com/jcmgray/quimb.
+
 import os
 import sys
 import numpy as np
@@ -7,7 +9,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ====================================================================================
-# 1. MPI / PETSc / SLEPc INITIALIZATION
+# 1. MPI / PETSc / SLEPc Initialization 
 # ====================================================================================
 import petsc4py
 petsc4py.init(sys.argv)
@@ -23,7 +25,7 @@ def get_default_comm():
     return MPI.COMM_WORLD
 
 # ====================================================================================
-# 2. BULLETPROOF DATA LOADER
+# 2. Data loader
 # ====================================================================================
 def load_raw_coordinates(file_path):
     if not os.path.isfile(file_path):
@@ -35,7 +37,7 @@ def load_raw_coordinates(file_path):
     return rows, cols, values, max_size
 
 # ====================================================================================
-# 3. DENSE TO SPARSE CONVERTER
+# 3. Dense to sparse converter using PETSc machinery
 # ====================================================================================
 def convert_dense_to_petsc(dense_mat, name, comm=None):
     if comm is None: comm = get_default_comm()
@@ -58,7 +60,7 @@ def convert_dense_to_petsc(dense_mat, name, comm=None):
     return pmat
 
 # ====================================================================================
-# 4. SOLVER: CISS WITH SUPERLU_DIST
+# 4. Solver: CISS with SUPERLU_DIST # FIXME generalize
 # ====================================================================================
 def solve_eigenproblem(A_dense, B_dense, comm):
     rank = comm.Get_rank()
@@ -75,29 +77,27 @@ def solve_eigenproblem(A_dense, B_dense, comm):
     # Configure CISS
     eps.setType(SLEPc.EPS.Type.CISS)
     
-    # Keep MPI communicators intact and route solves through primary ST
+    # Keep MPI communicators intact and route solves through primary ST # FIXME do you need these, especially the first?
     opts = PETSc.Options()
     opts.setValue('-eps_ciss_partitions', 1) 
     opts.setValue('-eps_ciss_usest', 1)      
     
-    real_min, real_max = 1.0e2, 5.0e3
-    imag_bound = 1.0e-4
+    real_min, real_max = 1.0e2, 5.0e3 # FIXME generalize to input
+    imag_bound = 1.0e-4 # FIXME generalize to input
     rg = eps.getRG()
     rg.setType(SLEPc.RG.Type.INTERVAL)
     rg.setIntervalEndpoints(real_min, real_max, -imag_bound, imag_bound)
     
     # ----------------------------------------------------------------------
-    # USE SUPERLU_DIST FOR ROBUST PARALLEL FACTORIZATION
+    # Use SUPERLU_DIST for parallel factorization # FIXME generalize
     # ----------------------------------------------------------------------
     st = eps.getST()
-    st.setType(SLEPc.ST.Type.SINVERT)
     
     ksp = st.getKSP()
     ksp.setType(PETSc.KSP.Type.PREONLY) 
     
     pc = ksp.getPC()
     pc.setType(PETSc.PC.Type.LU)
-    # The magic line: Swap MUMPS for SuperLU_DIST
     pc.setFactorSolverType(PETSc.Mat.SolverType.SUPERLU_DIST)
     # ----------------------------------------------------------------------
 
@@ -113,7 +113,7 @@ def solve_eigenproblem(A_dense, B_dense, comm):
 
     comm.Barrier()
     if rank == 0: print(f"--- EXTRACTING RESULTS ---", flush=True)
-    nconv = eps.getConverged()
+    nconv = eps.getConverged() # FIXME would be useful to know how many un-converged eigenpairs there are! 
     eigenvalues = []
     for i in range(nconv):
         val = eps.getEigenvalue(i)
@@ -126,7 +126,7 @@ def solve_eigenproblem(A_dense, B_dense, comm):
     return eigenvalues
 
 # ====================================================================================
-# MAIN SCRIPT EXECUTION
+# Driver script
 # ====================================================================================
 if __name__ == "__main__":
     comm = get_default_comm()
@@ -144,10 +144,11 @@ if __name__ == "__main__":
     if rank == 0:
         print(f"Loading matrices. Enforcing global size: {global_size} x {global_size}", flush=True)
         
-    A_dense = np.zeros((global_size, global_size), dtype=np.complex128)
+    A_dense = np.zeros((global_size, global_size), dtype=np.complex128) # FIXME switching these back to sparse matrices (without breaking transfer into PETSC) would be best, if possible
     B_dense = np.zeros((global_size, global_size), dtype=np.complex128)
     np.add.at(A_dense, (rows_A, cols_A), vals_A)
     np.add.at(B_dense, (rows_B, cols_B), vals_B)
+    # FIXME I think if you're already using dense matrices, you can just load using Alexey's classes and call .to_matrix() on them
     
     found_evals = solve_eigenproblem(A_dense, B_dense, comm)
     
