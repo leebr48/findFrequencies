@@ -3,6 +3,8 @@
 import os
 import sys
 import numpy as np
+import scipy.sparse as sp
+from dataclasses import dataclass, field
 import warnings
 
 # Silence the harmless slepc4py complex() deprecation warning
@@ -25,21 +27,80 @@ def get_default_comm():
     return MPI.COMM_WORLD
 
 # ====================================================================================
-# 2. Data loader
+# 2. Data loader from Alexey Knyazev
 # ====================================================================================
-def load_raw_coordinates(file_path):
-    if not os.path.isfile(file_path):
-        raise FileNotFoundError(f"Data file {file_path} not found.")
+@dataclass
+class FieldBendingMatrix:
+    '''
+    Field bending (sparse) matrix A from Az = lambda Bz generalized eigenvalue problem.
+    Stored in a_matrix.dat output of AE3D code,
+    where lambda is the square of frequency, and eigenvector z is the shear Alfven mode.
+    '''
+    sim_dir: str
+    file_path: str = field(init=False)
+    matrix_description: str = field(default_factory=lambda: "Field bending (sparse) matrix A from Az = lambda Bz generalized eigenvalue problem")
+    matrix: sp.coo_matrix = field(init=False)
 
-    data = np.loadtxt(file_path, dtype=[('i', int), ('j', int), ('value', float)])
-    rows, cols, values = data['i'] - 1, data['j'] - 1, data['value']
-    max_size = max(np.max(rows), np.max(cols)) + 1
-    return rows, cols, values, max_size
+    def __post_init__(self):
+        self.file_path = os.path.join(self.sim_dir, 'a_matrix.dat')
+        self.matrix = self.load_matrix()
+
+    def load_matrix(self):
+        if not os.path.isfile(self.file_path):
+            raise FileNotFoundError(f"Data file {self.file_path} not found.")
+
+        with open(self.file_path, 'r') as file:
+            data = np.loadtxt(file, dtype=[('i', int), ('j', int), ('value', float)])
+
+        # Adjust indices for 0-based indexing in Python (if original indices are 1-based)
+        rows = data['i'] - 1
+        cols = data['j'] - 1
+        values = data['value']
+
+        # Find the maximum index for matrix dimension
+        size = max(np.max(rows), np.max(cols)) + 1
+
+        # Create the COO sparse matrix
+        return sp.coo_matrix((values, (rows, cols)), shape=(size, size))
+
+@dataclass
+class InertiaMatrix:
+    '''
+    Inertia (sparse) matrix B from Az = lambda Bz generalized eigenvalue problem.
+    Stored in a_matrix.dat output of AE3D code,
+    where lambda is the square of frequency, and eigenvector z is the shear Alfven mode.
+    '''
+    sim_dir: str
+    file_path: str = field(init=False)
+    matrix_description: str = field(default_factory=lambda: "Inertia matrix B from Az = lambda Bz generalized eigenvalue problem")
+    matrix: sp.coo_matrix = field(init=False)
+
+    def __post_init__(self):
+        self.file_path = os.path.join(self.sim_dir, 'b_matrix.dat')
+        self.matrix = self.load_matrix()
+
+    def load_matrix(self):
+        if not os.path.isfile(self.file_path):
+            raise FileNotFoundError(f"Data file {self.file_path} not found.")
+
+        with open(self.file_path, 'r') as file:
+            data = np.loadtxt(file, dtype=[('i', int), ('j', int), ('value', float)])
+
+        # Adjust indices for 0-based indexing in Python (original indices are 1-based)
+        rows = data['i'] - 1
+        cols = data['j'] - 1
+        values = data['value']
+
+        # Find the maximum index for matrix dimension
+        size = max(np.max(rows), np.max(cols)) + 1
+
+        # Create the COO sparse matrix
+        return sp.coo_matrix((values, (rows, cols)), shape=(size, size))
 
 # ====================================================================================
 # 3. Dense to sparse converter using PETSc machinery
 # ====================================================================================
-def convert_dense_to_petsc(dense_mat, name, comm=None):
+def convert_dense_to_petsc(dense_mat, comm=None):
     if comm is None: comm = get_default_comm()
     
     pmat = PETSc.Mat().create(comm=comm)
@@ -65,8 +126,8 @@ def convert_dense_to_petsc(dense_mat, name, comm=None):
 def solve_eigenproblem(A_dense, B_dense, comm):
     rank = comm.Get_rank()
     
-    pA = convert_dense_to_petsc(A_dense, "Matrix A", comm=comm)
-    pB = convert_dense_to_petsc(B_dense, "Matrix B", comm=comm)
+    pA = convert_dense_to_petsc(A_dense, comm=comm)
+    pB = convert_dense_to_petsc(B_dense, comm=comm)
 
     comm.Barrier()
     if rank == 0: print(f"\n--- CONFIGURING SOLVER ---", flush=True)
@@ -132,23 +193,9 @@ if __name__ == "__main__":
     comm = get_default_comm()
     rank = comm.Get_rank()
     
-    data_dir = '.'
-    file_a = os.path.join(data_dir, 'a_matrix.dat')
-    file_b = os.path.join(data_dir, 'b_matrix.dat')
-
-    rows_A, cols_A, vals_A, size_A = load_raw_coordinates(file_a)
-    rows_B, cols_B, vals_B, size_B = load_raw_coordinates(file_b)
-    
-    global_size = max(size_A, size_B)
-    
-    if rank == 0:
-        print(f"Loading matrices. Enforcing global size: {global_size} x {global_size}", flush=True)
-        
-    A_dense = np.zeros((global_size, global_size), dtype=np.complex128) # FIXME switching these back to sparse matrices (without breaking transfer into PETSC) would be best, if possible
-    B_dense = np.zeros((global_size, global_size), dtype=np.complex128)
-    np.add.at(A_dense, (rows_A, cols_A), vals_A)
-    np.add.at(B_dense, (rows_B, cols_B), vals_B)
-    # FIXME I think if you're already using dense matrices, you can just load using Alexey's classes and call .to_matrix() on them
+    data_dir = '.' #FIXME should be another option
+    A_dense = FieldBendingMatrix(data_dir).load_matrix().toarray() # FIXME switching these back to sparse matrices (without breaking transfer into PETSC) would be best, if possible
+    B_dense = InertiaMatrix(data_dir).load_matrix().toarray()
     
     found_evals = solve_eigenproblem(A_dense, B_dense, comm)
     
