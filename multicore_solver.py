@@ -77,7 +77,7 @@ def solve_eigenproblem(A_dense, B_dense, comm):
     # Configure CISS
     eps.setType(SLEPc.EPS.Type.CISS)
     
-    # Keep MPI communicators intact and route solves through primary ST # FIXME do you need these, especially the first?
+    # Keep MPI communicators intact and route solves through primary ST
     opts = PETSc.Options()
     opts.setValue('-eps_ciss_partitions', 1) 
     opts.setValue('-eps_ciss_usest', 1)      
