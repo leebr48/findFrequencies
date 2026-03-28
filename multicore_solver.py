@@ -121,7 +121,7 @@ def convert_dense_to_petsc(dense_mat, comm=None):
     return pmat
 
 # ====================================================================================
-# 4. Solver: CISS with SUPERLU_DIST # FIXME generalize
+# 4. Solver # FIXME generalize to have different methods at some point
 # ====================================================================================
 def solve_eigenproblem(A_dense, B_dense, comm):
     rank = comm.Get_rank()
@@ -140,7 +140,6 @@ def solve_eigenproblem(A_dense, B_dense, comm):
     
     # Keep MPI communicators intact and route solves through primary ST
     opts = PETSc.Options()
-    opts.setValue('-eps_ciss_partitions', 1) 
     opts.setValue('-eps_ciss_usest', 1)      
     
     real_min, real_max = 1.0e2, 5.0e3 # FIXME generalize to input
