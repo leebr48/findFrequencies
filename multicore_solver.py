@@ -120,7 +120,7 @@ def convert_dense_to_petsc(dense_mat, name, comm=None):
 # ====================================================================================
 # 4. SOLVER: KRYLOV-SCHUR OR CISS
 # ====================================================================================
-def solve_eigenproblem(A_dense, B_dense, comm, real_min=0.0, real_max=5000.0, method="krylovschur"):
+def solve_eigenproblem(A_dense, B_dense, comm, real_min=0.0, real_max=5000.0, method="krylovschur", check_error=True):
     rank = comm.Get_rank()
     
     pA = convert_dense_to_petsc(A_dense, "Matrix A", comm=comm)
@@ -191,17 +191,41 @@ def solve_eigenproblem(A_dense, B_dense, comm, real_min=0.0, real_max=5000.0, me
     
     if rank == 0: print(f"Converged Eigenpairs: {nconv}", flush=True)
     
-    eigenvalues = []
+    # Initialize PETSc Vectors to hold the eigenvectors temporarily
+    vr, _ = pA.createVecs()
+    vi = vr.duplicate()
+    
+    results = []
     for i in range(nconv):
+        # Extract Eigenvalue and Eigenvector
         val = eps.getEigenvalue(i)
-        error = eps.computeError(i)  # Calculate the residual error for verification
-        eigenvalues.append((val, error))
+        eps.getEigenvector(i, vr, vi)
+        
+        # Calculate error only if toggled on
+        error = eps.computeError(i) if check_error else None
+        
+        # Safely gather the distributed vector arrays across the MPI communicators
+        vr_local = vr.getArray()
+        vi_local = vi.getArray()
+        
+        vr_gathered = comm.gather(vr_local, root=0)
+        vi_gathered = comm.gather(vi_local, root=0)
+        
+        if rank == 0:
+            # Stitch the distributed arrays back together seamlessly
+            vr_full = np.concatenate(vr_gathered)
+            vi_full = np.concatenate(vi_gathered)
+            results.append((val, error, vr_full, vi_full))
+        else:
+            results.append((val, error, None, None))
 
     eps.destroy()
     pA.destroy()
     pB.destroy()
+    vr.destroy()
+    vi.destroy()
     
-    return eigenvalues
+    return results
 
 # ====================================================================================
 # Driver script
@@ -225,23 +249,54 @@ if __name__ == "__main__":
     search_min = 100.0
     search_max = 5000.0
     
-    # Toggle to 'ciss' to test Contour Integration later
-    found_evals = solve_eigenproblem(A_dense, B_dense, comm, real_min=search_min, real_max=search_max, method="krylovschur")
+    # Toggle check_error=True to calculate residuals
+    run_error_check = True 
+    
+    found_results = solve_eigenproblem(A_dense, B_dense, comm, real_min=search_min, real_max=search_max, method="krylovschur", check_error=run_error_check)
     
     if rank == 0:
-        # Filter the eigenvalues to only include those within the user-specified range
-        in_range_evals = [(idx, ev, err) for idx, (ev, err) in enumerate(found_evals) if search_min <= ev.real <= search_max]
+        # Filter the results to only include those within the user-specified range
+        in_range_results = [(idx, res) for idx, res in enumerate(found_results) if search_min <= res[0].real <= search_max]
         
-        print(f"\n[SUCCESS] {len(found_evals)} total eigenvalues found, {len(in_range_evals)} of which are in the user-specified range [{search_min}, {search_max}].")
+        print(f"\n[SUCCESS] {len(found_results)} total eigenvalues found, {len(in_range_results)} of which are in the user-specified range [{search_min}, {search_max}].")
         
-        if in_range_evals:
-            # 1. Print formatted columns for in-range eigenvalues
-            for idx, ev, err in in_range_evals:
-                # <4 aligns the index left, >15.6f right-aligns the float, >9.2e right-aligns the scientific notation
-                print(f"   Eigenvalue {idx:<4}: {ev.real:>15.6f} + {ev.imag:>15.6f}j  |  Residual Error: {err:>9.2e}")
+        if in_range_results:
+            if run_error_check:
+                # Find and print the eigenvalue with the maximum residual error WITHIN the specified range
+                max_item = max(in_range_results, key=lambda x: x[1][1])
+                max_idx, (max_ev, max_err, _, _) = max_item
+                print(f"\n[DIAGNOSTIC] The largest relative error of the eigenvalues in this range is {max_err:.2e} for eigenvalue {max_idx} with value ({max_ev.real:.6f} + {max_ev.imag:.6f}j).")
             
-            # 2. Find and print the eigenvalue with the maximum residual error WITHIN the specified range
-            max_item = max(in_range_evals, key=lambda x: x[2])
-            max_idx, max_ev, max_err = max_item
+            print("\nSaving eigenvalues and eigenvectors to text files...")
             
-            print(f"\n[DIAGNOSTIC] The largest relative error of the eigenvalues in this range is {max_err:.2e} for eigenvalue {max_idx} with value ({max_ev.real:.6f} + {max_ev.imag:.6f}j).")
+            filtered_vals = []
+            filtered_vr = []
+            filtered_vi = []
+            
+            for idx, res in in_range_results:
+                val, err, vr_full, vi_full = res
+                
+                filtered_vals.append(val)
+                
+                # SLEPc complex builds store the entire complex vector in `vr_full` and zero in `vi_full`.
+                # Real builds split them. Adding them this way handles BOTH builds perfectly.
+                evec_complex = vr_full + 1j * vi_full
+                
+                # Extract strict float arrays so NumPy savetxt doesn't stringify them
+                filtered_vr.append(np.real(evec_complex).astype(float))
+                filtered_vi.append(np.imag(evec_complex).astype(float))
+            
+            # Save Eigenvalues (Format: "# Real Imaginary")
+            val_array = np.column_stack((np.real(filtered_vals), np.imag(filtered_vals)))
+            np.savetxt("found_eigenvalues.txt", val_array, header="# Real Imaginary", comments='', fmt='%.16e')
+            
+            # Convert to 2D numpy arrays. Shape: (num_eigenvectors, matrix_size)
+            vr_array = np.array(filtered_vr)
+            vi_array = np.array(filtered_vi)
+            
+            # Save Transposed Arrays (.T makes it matrix_size rows by num_eigenvectors columns)
+            # The format string '%.16e' guarantees clean, separated columns in scientific notation.
+            np.savetxt("found_eigenvectors_real.txt", vr_array.T, fmt='%.16e')
+            np.savetxt("found_eigenvectors_imag.txt", vi_array.T, fmt='%.16e')
+            
+            print("[SUCCESS] Files saved successfully to working directory.")
