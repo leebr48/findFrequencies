@@ -7,16 +7,16 @@ data_dir = '.' # Where the A and B matrices are stored
 symmetrize = False # If True, replace A <- 0.5 * [A + (A*)^T] and B <- 0.5 * [B + (B*)^T]
 
 search_real_min = 100.0 # Lower real bound for eigenvalue search
-search_real_max = 140.#500.0#5000.0 # Upper real bound for eigenvalue search
-search_imag_min = -20.#-0.5 # Lower imaginary bound for eigenvalue search
-search_imag_max = 20.#0.5 # Upper imaginary bound for eigenvalue search
+search_real_max = 5000.0 # Upper real bound for eigenvalue search
+search_imag_min = -20. # Lower imaginary bound for eigenvalue search
+search_imag_max = 20. # Upper imaginary bound for eigenvalue search
 
-algo = 'ciss' # 'krylovschur' is fast and should be used for real eigenvalues. It's a "hammer".
-                     # 'ciss' is slower but searches a region in the complex plane. It's a "scalpel".
-ks_num_eigenvals = 150#1500 # Only relevant for algo = 'krylovschur'.
+algo = 'krylovschur' # 'krylovschur' is fast and should be used for real eigenvalues. It's a "hammer".
+                     # 'ciss' is *much* slower but searches a region in the complex plane. It's a "scalpel".
+ks_num_eigenvals = 1500 # Only relevant for algo = 'krylovschur'.
                      # Number of eigenvalues to find. Make this large enough that some
                      # of the eigenvalues are outside your desired range.
-ks_subspace_dim = 300#3000 # Only relevant for algo = 'krylovschur'.
+ks_subspace_dim = 3000 # Only relevant for algo = 'krylovschur'.
                     # Raising this requires more memory, but increases accuracy and speed.
                     # If you have enough memory, setting this to 2 * ks_num_eigenvals works well.
 ks_search_complex = False # If True, Krylov-Schur will search a circle in the complex plane for eigenvals. 
@@ -30,9 +30,9 @@ ciss_threshold = 1e-6 # Tolerance for throwing out fake eigenvals that appear du
 
 run_error_check = True # If True, compute and print max(||A x - \lambda B x||_2 / |\lambda|)
 save_results = True # If True, save the eigenvalues and eigenvectors to text files
-eigenval_file_name = 'ciss_eigenvals.txt'#'found_eigenvalues.txt'
-real_eigenvec_file_name = 'ciss_eigenvecs_real.txt'#'found_eigenvectors_real.txt'
-imag_eigenvec_file_name = 'ciss_eigenvecs_imag.txt'#'found_eigenvectors_imag.txt'
+eigenval_file_name = 'found_eigenvalues.txt'
+real_eigenvec_file_name = 'found_eigenvectors_real.txt'
+imag_eigenvec_file_name = 'found_eigenvectors_imag.txt'
 
 # Many of the functions below were adapted from https://github.com/jcmgray/quimb.
 
@@ -99,7 +99,6 @@ class FieldBendingMatrix:
 
         return sp.coo_matrix((values, (rows, cols)), shape=(size, size))
 
-
 @dataclass
 class InertiaMatrix:
     '''
@@ -160,72 +159,13 @@ def convert_dense_to_petsc(dense_mat, name, comm=None):
 # ====================================================================================
 # 4. SOLVER: KRYLOV-SCHUR OR CISS
 # ====================================================================================
-def solve_eigenproblem(A_dense, B_dense, comm, real_min, real_max, imag_min, imag_max, nev, ncv, ks_search_complex, method="krylovschur", check_error=True, ciss_num_chunks=1, ciss_num_points=128, ciss_blocksize=64, ciss_moments=4, ciss_delta=1e-4, ciss_threshold=1e-6): # FIXME your args and kwargs are a bit weird. Should have consistency between which is which, how they are named, etc.
+def solve_eigenproblem(A_dense, B_dense, comm, real_min, real_max, imag_min, imag_max, nev, ncv, ks_search_complex, method="krylovschur", check_error=True, ciss_num_chunks=1, ciss_num_points=128, ciss_blocksize=64, ciss_moments=4, ciss_delta=1e-4, ciss_threshold=1e-6): 
     rank = comm.Get_rank()
     
     pA = convert_dense_to_petsc(A_dense, "Matrix A", comm=comm)
     pB = convert_dense_to_petsc(B_dense, "Matrix B", comm=comm)
 
-    comm.Barrier()
-    if rank == 0: print(f"\n--- CONFIGURING SOLVER ({method.upper()}) ---", flush=True)
-    eps = SLEPc.EPS().create(comm=comm)
-    eps.setOperators(pA, pB)
-        
-    if method == "krylovschur":
-        eps.setProblemType(SLEPc.EPS.ProblemType.GNHEP)
-        eps.setType(SLEPc.EPS.Type.KRYLOVSCHUR)
-        
-        if ks_search_complex:
-            eps.setWhichEigenpairs(SLEPc.EPS.Which.TARGET_MAGNITUDE)
-        else:
-            eps.setWhichEigenpairs(SLEPc.EPS.Which.TARGET_REAL)
-
-        eps.setTarget(real_min) 
-        eps.setDimensions(nev=nev, ncv=ncv)
-        
-        st = eps.getST()
-        st.setType(SLEPc.ST.Type.SINVERT)
-        st.setShift(real_min)
-        
-        ksp = st.getKSP()
-        ksp.setType(PETSc.KSP.Type.PREONLY) 
-        pc = ksp.getPC()
-        pc.setType(PETSc.PC.Type.LU)
-        pc.setFactorSolverType(PETSc.Mat.SolverType.SUPERLU_DIST)
-        
-    elif method == "ciss":
-        eps.setProblemType(SLEPc.EPS.ProblemType.GNHEP) 
-        eps.setType(SLEPc.EPS.Type.CISS)
-
-        # Explicitly allocate memory for the CISS subspace so it matches Krylov's capacity
-        eps.setDimensions(nev=nev, ncv=ncv)
-        
-        opts = PETSc.Options()
-        opts.setValue('-eps_ciss_usest', 1)
-        opts.setValue('-eps_ciss_integration_points', ciss_num_points)
-        opts.setValue('-eps_ciss_blocksize', ciss_blocksize)
-        opts.setValue('-eps_ciss_moments', ciss_moments)
-        opts.setValue('-eps_ciss_delta', ciss_delta)
-        opts.setValue('-eps_ciss_spurious_threshold', ciss_threshold)
-        
-        rg = eps.getRG()
-        rg.setType(SLEPc.RG.Type.INTERVAL)
-        rg.setIntervalEndpoints(real_min, real_max, imag_min, imag_max)
-        
-        st = eps.getST()
-        st.setType(SLEPc.ST.Type.SINVERT)
-        ksp = st.getKSP()
-        ksp.setType(PETSc.KSP.Type.PREONLY) 
-        pc = ksp.getPC()
-        pc.setType(PETSc.PC.Type.LU)
-        pc.setFactorSolverType(PETSc.Mat.SolverType.SUPERLU_DIST)
-    
-    else:
-        raise ValueError(f"Unknown method '{method}'. Choose 'krylovschur' or 'ciss'.")
-    
-    eps.setFromOptions()
-
-    # 1. Determine the intervals for chunking
+    # 1. Determine the intervals for chunking FIRST
     intervals = []
     if method == "ciss" and ciss_num_chunks > 1:
         chunk_edges = np.linspace(real_min, real_max, ciss_num_chunks + 1)
@@ -244,15 +184,67 @@ def solve_eigenproblem(A_dense, B_dense, comm, real_min, real_max, imag_min, ima
     # 2. Loop over each chunk sequentially
     for chunk_idx, (c_min, c_max) in enumerate(intervals):
         
-        # Update the CISS contour boundaries for this specific chunk
-        if method == "ciss":
-            rg = eps.getRG()
-            rg.setIntervalEndpoints(c_min, c_max, imag_min, imag_max)
-        
         comm.Barrier()
         if rank == 0: 
             chunk_str = f" (CHUNK {chunk_idx+1}/{len(intervals)}: [{c_min:.2f}, {c_max:.2f}])" if len(intervals) > 1 else ""
-            print(f"\n--- EXECUTING SETUP & SOLVE{chunk_str} ---", flush=True)
+            print(f"\n--- CONFIGURING SOLVER{chunk_str} ---", flush=True)
+            
+        # >>> FIX: Create a fresh solver for EVERY chunk so SLEPc doesn't cache the previous results <<<
+        eps = SLEPc.EPS().create(comm=comm)
+        eps.setOperators(pA, pB)
+        
+        if method == "krylovschur":
+            eps.setProblemType(SLEPc.EPS.ProblemType.GNHEP)
+            eps.setType(SLEPc.EPS.Type.KRYLOVSCHUR)
+            
+            if ks_search_complex:
+                eps.setWhichEigenpairs(SLEPc.EPS.Which.TARGET_MAGNITUDE)
+            else:
+                eps.setWhichEigenpairs(SLEPc.EPS.Which.TARGET_REAL)
+
+            # Use the chunk minimum as the dynamic shift target
+            eps.setTarget(c_min) 
+            eps.setDimensions(nev=nev, ncv=ncv)
+            
+            st = eps.getST()
+            st.setType(SLEPc.ST.Type.SINVERT)
+            st.setShift(c_min)
+            
+            ksp = st.getKSP()
+            ksp.setType(PETSc.KSP.Type.PREONLY) 
+            pc = ksp.getPC()
+            pc.setType(PETSc.PC.Type.LU)
+            pc.setFactorSolverType(PETSc.Mat.SolverType.SUPERLU_DIST)
+            
+        elif method == "ciss":
+            eps.setProblemType(SLEPc.EPS.ProblemType.GNHEP) 
+            eps.setType(SLEPc.EPS.Type.CISS)
+
+            eps.setDimensions(nev=nev, ncv=ncv)
+            
+            opts = PETSc.Options()
+            opts.setValue('-eps_ciss_usest', 1)
+            opts.setValue('-eps_ciss_integration_points', ciss_num_points)
+            opts.setValue('-eps_ciss_blocksize', ciss_blocksize)
+            opts.setValue('-eps_ciss_moments', ciss_moments)
+            opts.setValue('-eps_ciss_delta', ciss_delta)
+            opts.setValue('-eps_ciss_spurious_threshold', ciss_threshold)
+            
+            rg = eps.getRG()
+            rg.setType(SLEPc.RG.Type.INTERVAL)
+            rg.setIntervalEndpoints(c_min, c_max, imag_min, imag_max)
+            
+            st = eps.getST()
+            st.setType(SLEPc.ST.Type.SINVERT)
+            ksp = st.getKSP()
+            ksp.setType(PETSc.KSP.Type.PREONLY) 
+            pc = ksp.getPC()
+            pc.setType(PETSc.PC.Type.LU)
+            pc.setFactorSolverType(PETSc.Mat.SolverType.SUPERLU_DIST)
+        
+        eps.setFromOptions()
+
+        if rank == 0: print(f"--- EXECUTING SETUP & SOLVE ---", flush=True)
         
         eps.setUp()
         eps.solve()
@@ -284,7 +276,9 @@ def solve_eigenproblem(A_dense, B_dense, comm, real_min, real_max, imag_min, ima
                 vi_full = np.concatenate(vi_gathered)
                 results.append((val, error, vr_full, vi_full))
 
-    eps.destroy()
+        # Explicitly destroy the solver at the end of the loop iteration to prevent memory leaks
+        eps.destroy()
+
     pA.destroy()
     pB.destroy()
     vr.destroy()
