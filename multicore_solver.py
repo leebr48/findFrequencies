@@ -130,26 +130,39 @@ class InertiaMatrix:
         return sp.coo_matrix((values, (rows, cols)), shape=(size, size))
 
 # ====================================================================================
-# 3. DENSE TO SPARSE CONVERTER
+# 3. SPARSE TO PETSC CONVERTER
 # ====================================================================================
-def convert_dense_to_petsc(dense_mat, name, comm=None):
+def convert_sparse_to_petsc(sparse_mat, name, comm=None, is_hermitian=False):
     if comm is None: comm = get_default_comm()
     
+    # Convert COO or generic sparse to CSR format. CSR is identical to PETSc's AIJ memory layout.
+    sparse_mat_csr = sparse_mat.tocsr()
+    
     pmat = PETSc.Mat().create(comm=comm)
-    pmat.setSizes(dense_mat.shape)
+    pmat.setSizes(sparse_mat_csr.shape)
     pmat.setType(PETSc.Mat.Type.AIJ)
     
-    # Tag as Hermitian for good measure, though GNHEP uses standard Euclidean inner products
-    pmat.setOption(PETSc.Mat.Option.HERMITIAN, True)
+    # Only tag as Hermitian if explicitly requested by the user
+    if is_hermitian:
+        pmat.setOption(PETSc.Mat.Option.HERMITIAN, True)
     
     pmat.setUp()
 
+    # Determine which rows of the matrix this specific MPI rank is responsible for
     rstart, rend = pmat.getOwnershipRange()
+    
+    # Extract the raw internal arrays from the CSR matrix
+    indptr = sparse_mat_csr.indptr
+    indices = sparse_mat_csr.indices
+    data = sparse_mat_csr.data
+    
+    # Pass ONLY the non-zero values directly to PETSc, row by row
     for i in range(rstart, rend):
-        row_data = dense_mat[i, :]
-        nonzero_cols = np.nonzero(row_data)[0].astype(PETSc.IntType)
-        nonzero_vals = row_data[nonzero_cols].astype(PETSc.ScalarType)
-        if len(nonzero_cols) > 0:
+        start = indptr[i]
+        end = indptr[i+1]
+        if start < end:
+            nonzero_cols = indices[start:end].astype(PETSc.IntType)
+            nonzero_vals = data[start:end].astype(PETSc.ScalarType)
             pmat.setValues(i, nonzero_cols, nonzero_vals)
 
     pmat.assemblyBegin(PETSc.Mat.AssemblyType.FINAL_ASSEMBLY)
@@ -159,11 +172,11 @@ def convert_dense_to_petsc(dense_mat, name, comm=None):
 # ====================================================================================
 # 4. SOLVER: KRYLOV-SCHUR OR CISS
 # ====================================================================================
-def solve_eigenproblem(A_dense, B_dense, comm, real_min, real_max, imag_min, imag_max, nev, ncv, ks_search_complex, method="krylovschur", check_error=True, ciss_num_chunks=1, ciss_num_points=128, ciss_blocksize=64, ciss_moments=4, ciss_delta=1e-4, ciss_threshold=1e-6): 
+def solve_eigenproblem(A_sparse, B_sparse, comm, real_min, real_max, imag_min, imag_max, nev, ncv, ks_search_complex, method="krylovschur", check_error=True, ciss_num_chunks=1, ciss_num_points=128, ciss_blocksize=64, ciss_moments=4, ciss_delta=1e-4, ciss_threshold=1e-6, is_hermitian=False): 
     rank = comm.Get_rank()
     
-    pA = convert_dense_to_petsc(A_dense, "Matrix A", comm=comm)
-    pB = convert_dense_to_petsc(B_dense, "Matrix B", comm=comm)
+    pA = convert_sparse_to_petsc(A_sparse, "Matrix A", comm=comm, is_hermitian=is_hermitian)
+    pB = convert_sparse_to_petsc(B_sparse, "Matrix B", comm=comm, is_hermitian=is_hermitian)
 
     # 1. Determine the intervals for chunking FIRST
     intervals = []
@@ -189,7 +202,7 @@ def solve_eigenproblem(A_dense, B_dense, comm, real_min, real_max, imag_min, ima
             chunk_str = f" (CHUNK {chunk_idx+1}/{len(intervals)}: [{c_min:.2f}, {c_max:.2f}])" if len(intervals) > 1 else ""
             print(f"\n--- CONFIGURING SOLVER{chunk_str} ---", flush=True)
             
-        # >>> FIX: Create a fresh solver for EVERY chunk so SLEPc doesn't cache the previous results <<<
+        # Create a fresh solver for EVERY chunk so SLEPc doesn't cache the previous results
         eps = SLEPc.EPS().create(comm=comm)
         eps.setOperators(pA, pB)
         
@@ -300,16 +313,13 @@ if __name__ == "__main__":
         A_sparse = 0.5 * (A_sparse + A_sparse.conj().T)
         B_sparse = 0.5 * (B_sparse + B_sparse.conj().T)
     
-    A_dense = A_sparse.toarray() # FIXME switching these back to sparse matrices (without breaking transfer into PETSC) would be best, if possible
-    B_dense = B_sparse.toarray()
-
     if algo == 'ciss':
         # We assume here that CISS will be used to look for eigenvalues near the real axis.
         ciss_num_chunks = np.ceil((search_real_max - search_real_min) / (search_imag_max - search_imag_min)).astype(int)
     else:
         ciss_num_chunks = 1 # Dummy value
     
-    found_results = solve_eigenproblem(A_dense, B_dense, comm, search_real_min, search_real_max, search_imag_min, search_imag_max, ks_num_eigenvals, ks_subspace_dim, ks_search_complex, method=algo, check_error=run_error_check, ciss_num_chunks=ciss_num_chunks, ciss_num_points=ciss_num_points, ciss_blocksize=ciss_blocksize, ciss_moments=ciss_moments, ciss_delta=ciss_delta, ciss_threshold=ciss_threshold)
+    found_results = solve_eigenproblem(A_sparse, B_sparse, comm, search_real_min, search_real_max, search_imag_min, search_imag_max, ks_num_eigenvals, ks_subspace_dim, ks_search_complex, method=algo, check_error=run_error_check, ciss_num_chunks=ciss_num_chunks, ciss_num_points=ciss_num_points, ciss_blocksize=ciss_blocksize, ciss_moments=ciss_moments, ciss_delta=ciss_delta, ciss_threshold=ciss_threshold, is_hermitian=symmetrize)
     
     if rank == 0:
         # Filter the results to only include those within the user-specified range
