@@ -33,9 +33,9 @@ LINEAR_SOLVER = 'superlu_dist'  # Direct solver for the spectral transform.
 
 RUN_ERROR_CHECK      = True   # If True, compute max(||Ax - lambda Bx||_2 / |lambda|) and print it.
 SAVE_RESULTS         = True   # If True, save eigenvalues and eigenvectors to text files.
-EIGENVAL_FILE        = 'TEST_eigenvalues.txt'
-REAL_EIGENVEC_FILE   = 'TEST_eigenvectors_real.txt'
-IMAG_EIGENVEC_FILE   = 'TEST_eigenvectors_imag.txt'
+EIGENVAL_FILE        = 'found_eigenvalues.txt'
+REAL_EIGENVEC_FILE   = 'found_eigenvectors_real.txt'
+IMAG_EIGENVEC_FILE   = 'found_eigenvectors_imag.txt'
 DIAG_FILE_STEM       = 'solver_diagnostics'  # All solver diagnostics are written here.
                                              # The file is always created; set to None to disable.
 
