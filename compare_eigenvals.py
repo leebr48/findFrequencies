@@ -79,14 +79,31 @@ def main():
     
     max_error = np.max(min_distances)
     mean_error = np.mean(min_distances)
-    
+
+    # For each found eigenvalue, get its nearest reference eigenvalue and compute
+    # relative error: |found - nearest_ref| / |nearest_ref|
+    nearest_indices = np.argmin(diff_matrix, axis=1)
+    nearest_refs = filtered_compare[nearest_indices]
+    ref_magnitudes = np.abs(nearest_refs)
+
+    # Guard against division by zero if any reference eigenvalue is at the origin
+    nonzero_mask = ref_magnitudes > 0
+    if not np.all(nonzero_mask):
+        print(f"WARNING: {np.sum(~nonzero_mask)} reference eigenvalue(s) have zero magnitude; "
+              f"relative error is undefined for those and they are excluded from relative metrics.")
+
+    rel_distances = min_distances[nonzero_mask] / ref_magnitudes[nonzero_mask]
+    max_rel_error  = np.max(rel_distances)  if len(rel_distances) > 0 else float('nan')
+    mean_rel_error = np.mean(rel_distances) if len(rel_distances) > 0 else float('nan')
+
     print(f"\nNumerical Difference Metrics (distance in complex plane):")
-    print(f"  Maximum discrepancy: {max_error:.6e}")
-    print(f"  Mean discrepancy:    {mean_error:.6e}")
+    print(f"  Maximum discrepancy:        {max_error:.6e}")
+    print(f"  Mean discrepancy:           {mean_error:.6e}")
+    print(f"  Maximum relative error:     {max_rel_error:.6e}")
+    print(f"  Mean relative error:        {mean_rel_error:.6e}")
 
     # Check for duplicate matching (e.g., if the solver missed a distinct eigenvalue 
     # and instead found the same eigenvalue twice)
-    nearest_indices = np.argmin(diff_matrix, axis=1)
     unique_matches = len(np.unique(nearest_indices))
     
     if unique_matches < n_found:
