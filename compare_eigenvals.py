@@ -8,7 +8,7 @@ COMPARE_FILE = 'asym_eigenvalues.txt'
 # 1. IMPORTS
 # ==============================================================================
 import numpy as np
-from multicore_solver import SEARCH_REAL_MIN, SEARCH_REAL_MAX, SEARCH_IMAG_MIN, SEARCH_IMAG_MAX
+from solver import SEARCH_REAL_MIN, SEARCH_REAL_MAX, SEARCH_IMAG_MIN, SEARCH_IMAG_MAX
 
 # ==============================================================================
 # 2. HELPER FUNCTIONS

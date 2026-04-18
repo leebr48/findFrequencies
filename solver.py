@@ -2,7 +2,9 @@
 # USER INPUTS
 # ====================================================================================
 
-DATA_DIR = '.'  # Directory containing a_matrix.dat and b_matrix.dat
+DATA_DIR = '.'  # Directory containing matrix files
+BENDING_MATRIX_A = 'a_matrix.dat' # Name of the matrix A file (A x = lambda B x)
+INERTIA_MATRIX_B = 'b_matrix.dat' # Name of the matrix B file (A x = lambda B x)
 
 SYMMETRIZE = False  # If True, replace A <- 0.5*(A + A*^T) and B <- 0.5*(B + B*^T)
 
@@ -86,14 +88,13 @@ class SparseMatrixLoader:
 
     The file format is a 1-indexed COO text file with three columns: row, col, value.
     This class is used to load both the A (field bending) and B (inertia) matrices
-    from the generalized eigenvalue problem A z = lambda B z,
-    where lambda is the square of frequency and z is the shear Alfven mode.
+    from the generalized eigenvalue problem A x = lambda B x,
+    where lambda is the square of frequency and x describes the shear Alfven mode.
 
     Credit: Alexey Knyazev.
     """
     sim_dir:     str
     filename:    str
-    description: str          = ""
     file_path:   str          = field(init=False)
     matrix:      sp.coo_matrix = field(init=False)
 
@@ -873,6 +874,8 @@ if __name__ == "__main__":
         if rank == 0:
             logger.section("USER INPUT PARAMETERS")
             logger.kv("DATA_DIR",          DATA_DIR)
+            logger.kv("BENDING_MATRIX_A",  BENDING_MATRIX_A)
+            logger.kv("INERTIA_MATRIX_B",  INERTIA_MATRIX_B)
             logger.kv("SYMMETRIZE",        SYMMETRIZE)
             logger.kv("SEARCH_REAL_MIN",   SEARCH_REAL_MIN)
             logger.kv("SEARCH_REAL_MAX",   SEARCH_REAL_MAX)
@@ -897,12 +900,8 @@ if __name__ == "__main__":
                 logger.kv("CISS_THRESHOLD",  CISS_THRESHOLD)
 
     # --- Load matrices -------------------------------------------------------
-    A_sparse = SparseMatrixLoader(
-        DATA_DIR, 'a_matrix.dat', description="Field bending matrix A"
-    ).matrix
-    B_sparse = SparseMatrixLoader(
-        DATA_DIR, 'b_matrix.dat', description="Inertia matrix B"
-    ).matrix
+    A_sparse = SparseMatrixLoader(DATA_DIR, BENDING_MATRIX_A).matrix
+    B_sparse = SparseMatrixLoader(DATA_DIR, INERTIA_MATRIX_B).matrix
 
     if SYMMETRIZE:
         A_sparse = 0.5 * (A_sparse + A_sparse.conj().T)

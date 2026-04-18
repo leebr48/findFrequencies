@@ -16,12 +16,12 @@ import time
 import numpy as np
 
 try:
-    from multicore_solver import (
+    from solver import (
         SEARCH_REAL_MIN, SEARCH_REAL_MAX,
         SEARCH_IMAG_MIN, SEARCH_IMAG_MAX,
     )
 except ImportError:
-    print("WARNING: Could not import multicore_solver. Using infinite bounds for testing.")
+    print("WARNING: Could not import solver.py. Using infinite bounds for testing.")
     SEARCH_REAL_MIN, SEARCH_REAL_MAX = -np.inf, np.inf
     SEARCH_IMAG_MIN, SEARCH_IMAG_MAX = -np.inf, np.inf
 
