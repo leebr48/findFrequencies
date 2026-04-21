@@ -33,7 +33,7 @@ CISS_THRESHOLD  = 1e-6  # (CISS only) Tolerance for rejecting spurious eigenvalu
 LINEAR_SOLVER = 'superlu_dist'  # Direct solver for the spectral transform.
                                 # 'superlu_dist' or 'mumps'. Choose based on your PETSc build.
 
-RUN_ERROR_CHECK      = True   # If True, compute max(||Ax - lambda Bx||_2 / |lambda|) and print it.
+RUN_ERROR_CHECK      = True   # If True, compute and print ||Ax - lambda Bx||_2 / |lambda|.
 SAVE_RESULTS         = True   # If True, save eigenvalues and eigenvectors to text files.
 EIGENVAL_FILE        = 'found_eigenvalues.txt'
 REAL_EIGENVEC_FILE   = 'found_eigenvectors_real.txt'
