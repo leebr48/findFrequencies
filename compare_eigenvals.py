@@ -97,8 +97,8 @@ def main():
     mean_rel_error = np.mean(rel_distances) if len(rel_distances) > 0 else float('nan')
 
     print(f"\nNumerical Difference Metrics (distance in complex plane):")
-    print(f"  Maximum discrepancy:        {max_error:.6e}")
-    print(f"  Mean discrepancy:           {mean_error:.6e}")
+    print(f"  Maximum absolute error:     {max_error:.6e}")
+    print(f"  Mean absolute error:        {mean_error:.6e}")
     print(f"  Maximum relative error:     {max_rel_error:.6e}")
     print(f"  Mean relative error:        {mean_rel_error:.6e}")
 
